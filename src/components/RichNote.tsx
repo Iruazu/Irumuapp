@@ -1,14 +1,9 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
-import { X, Bold, Italic, List, Link, Image, AlignLeft, CheckSquare, Code, Plus, Search, SortAsc, SortDesc, Download, ExternalLink, Maximize2, Minimize2 } from 'lucide-react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
-import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism'
-import { Navigation } from './Navigation'
 import { CategoryManager } from './CategoryManager'
 import { DragDropContext, Droppable, Draggable } from 'react-beautiful-dnd'
+import { Eye, Edit2, X, Maximize2, Minimize2 } from 'lucide-react'
 
 export interface NoteItem {
   id: string
@@ -32,67 +27,24 @@ interface RichNoteProps {
   onUpdateNote: (id: string, note: Partial<NoteItem>) => void
 }
 
-interface ContextMenuProps {
-  x: number
-  y: number
-  onClose: () => void
-  onOpenInNewTab: () => void
-  onOpenInNewWindow: () => void
-  onOpenInPopup: () => void
-}
-
-function ContextMenu({ x, y, onClose, onOpenInNewTab, onOpenInNewWindow, onOpenInPopup }: ContextMenuProps) {
-  return (
-    <div
-      className="fixed bg-[#2a2a2a] rounded-lg shadow-lg py-2 z-50"
-      style={{ top: y, left: x }}
-    >
-      <button
-        onClick={onOpenInNewTab}
-        className="w-full px-4 py-2 text-left hover:bg-[#3a3a3a] flex items-center"
-      >
-        <ExternalLink size={16} className="mr-2" />
-        新しいタブで開く
-      </button>
-      <button
-        onClick={onOpenInNewWindow}
-        className="w-full px-4 py-2 text-left hover:bg-[#3a3a3a] flex items-center"
-      >
-        <Maximize2 size={16} className="mr-2" />
-        新しいウィンドウで開く
-      </button>
-      <button
-        onClick={onOpenInPopup}
-        className="w-full px-4 py-2 text-left hover:bg-[#3a3a3a] flex items-center"
-      >
-        <Minimize2 size={16} className="mr-2" />
-        ポップアップで開く
-      </button>
-    </div>
-  )
-}
-
 export function RichNote({ notes, onAddNote, onDeleteNote, onUpdateNote }: RichNoteProps) {
   const [categories, setCategories] = useState<Category[]>([])
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null)
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [editingNote, setEditingNote] = useState<NoteItem | null>(null)
+  const [viewingNote, setViewingNote] = useState<NoteItem | null>(null)
   const [newNote, setNewNote] = useState<Partial<NoteItem>>({
     title: '',
     content: '',
     categoryId: null
   })
-  const [searchQuery, setSearchQuery] = useState('')
-  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
-  const [sortBy, setSortBy] = useState<'date' | 'title'>('date')
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
-  const [itemToDelete, setItemToDelete] = useState<string | null>(null)
-  const [deletedNotes, setDeletedNotes] = useState<NoteItem[]>([])
-  const editorRef = useRef<HTMLTextAreaElement>(null)
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; noteId: string } | null>(null)
-  const [popupNote, setPopupNote] = useState<NoteItem | null>(null)
-  const [isPopupMinimized, setIsPopupMinimized] = useState(false)
-  const popupRef = useRef<HTMLDivElement>(null)
+  const [modalSize, setModalSize] = useState({ width: 'md', height: 'auto' })
+
+  const modalRef = useRef<HTMLDivElement>(null)
+  const [isResizing, setIsResizing] = useState(false)
+  const [modalPosition, setModalPosition] = useState({ x: 0, y: 0 })
+  const [startPos, setStartPos] = useState({ x: 0, y: 0 })
+  const [isMaximized, setIsMaximized] = useState(false)
 
   // ローカルストレージからデータを読み込む
   useEffect(() => {
@@ -147,6 +99,7 @@ export function RichNote({ notes, onAddNote, onDeleteNote, onUpdateNote }: RichN
     }
     setIsModalOpen(false)
     setEditingNote(null)
+    setViewingNote(null)
     setNewNote({ title: '', content: '', categoryId: null })
   }
 
@@ -177,84 +130,70 @@ export function RichNote({ notes, onAddNote, onDeleteNote, onUpdateNote }: RichN
     ? notes.filter(note => note.categoryId === selectedCategoryId)
     : notes
 
-  // コンテキストメニューの外側をクリックしたら閉じる
+  const getModalSizeClass = () => {
+    switch (modalSize.width) {
+      case 'sm': return 'max-w-sm'
+      case 'md': return 'max-w-md'
+      case 'lg': return 'max-w-lg'
+      case 'xl': return 'max-w-xl'
+      default: return 'max-w-md'
+    }
+  }
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (e.target instanceof HTMLElement && e.target.classList.contains('resize-handle')) {
+      setIsResizing(true)
+      setStartPos({ x: e.clientX, y: e.clientY })
+    }
+  }
+
+  const handleMouseMove = (e: MouseEvent) => {
+    if (!isResizing || !modalRef.current) return
+
+    const deltaX = e.clientX - startPos.x
+    const deltaY = e.clientY - startPos.y
+
+    const newWidth = Math.max(400, modalRef.current.offsetWidth + deltaX)
+    const newHeight = Math.max(300, modalRef.current.offsetHeight + deltaY)
+
+    modalRef.current.style.width = `${newWidth}px`
+    modalRef.current.style.height = `${newHeight}px`
+
+    setStartPos({ x: e.clientX, y: e.clientY })
+  }
+
+  const handleMouseUp = () => {
+    setIsResizing(false)
+  }
+
   useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (contextMenu) {
-        setContextMenu(null)
-      }
+    if (isResizing) {
+      window.addEventListener('mousemove', handleMouseMove)
+      window.addEventListener('mouseup', handleMouseUp)
     }
-    document.addEventListener('click', handleClickOutside)
-    return () => document.removeEventListener('click', handleClickOutside)
-  }, [contextMenu])
-
-  // ポップアップのドラッグ機能
-  useEffect(() => {
-    if (!popupRef.current || !popupNote) return
-
-    const popup = popupRef.current
-    let isDragging = false
-    let offsetX = 0
-    let offsetY = 0
-
-    const handleMouseDown = (e: MouseEvent) => {
-      if (e.target === popup.querySelector('.popup-header')) {
-        isDragging = true
-        offsetX = e.clientX - popup.offsetLeft
-        offsetY = e.clientY - popup.offsetTop
-      }
-    }
-
-    const handleMouseMove = (e: MouseEvent) => {
-      if (isDragging) {
-        popup.style.left = `${e.clientX - offsetX}px`
-        popup.style.top = `${e.clientY - offsetY}px`
-      }
-    }
-
-    const handleMouseUp = () => {
-      isDragging = false
-    }
-
-    popup.addEventListener('mousedown', handleMouseDown)
-    document.addEventListener('mousemove', handleMouseMove)
-    document.addEventListener('mouseup', handleMouseUp)
 
     return () => {
-      popup.removeEventListener('mousedown', handleMouseDown)
-      document.removeEventListener('mousemove', handleMouseMove)
-      document.removeEventListener('mouseup', handleMouseUp)
+      window.removeEventListener('mousemove', handleMouseMove)
+      window.removeEventListener('mouseup', handleMouseUp)
     }
-  }, [popupNote])
+  }, [isResizing])
 
-  const handleContextMenu = (e: React.MouseEvent, noteId: string) => {
-    e.preventDefault()
-    setContextMenu({ x: e.clientX, y: e.clientY, noteId })
-  }
+  const toggleMaximize = () => {
+    if (!modalRef.current) return
 
-  const handleOpenInNewTab = (noteId: string) => {
-    const note = notes.find(n => n.id === noteId)
-    if (note) {
-      window.open(`/note/${noteId}`, '_blank')
+    if (isMaximized) {
+      modalRef.current.style.width = '80%'
+      modalRef.current.style.height = '80%'
+      modalRef.current.style.top = '10%'
+      modalRef.current.style.left = '10%'
+    } else {
+      modalRef.current.style.width = '95%'
+      modalRef.current.style.height = '95%'
+      modalRef.current.style.top = '2.5%'
+      modalRef.current.style.left = '2.5%'
     }
-    setContextMenu(null)
-  }
 
-  const handleOpenInNewWindow = (noteId: string) => {
-    const note = notes.find(n => n.id === noteId)
-    if (note) {
-      const features = 'width=800,height=600,left=100,top=100'
-      window.open(`/note/${noteId}`, '_blank', features)
-    }
-    setContextMenu(null)
-  }
-
-  const handleOpenInPopup = (noteId: string) => {
-    const note = notes.find(n => n.id === noteId)
-    if (note) {
-      setPopupNote(note)
-    }
-    setContextMenu(null)
+    setIsMaximized(!isMaximized)
   }
 
   return (
@@ -299,15 +238,34 @@ export function RichNote({ notes, onAddNote, onDeleteNote, onUpdateNote }: RichN
                         ref={provided.innerRef}
                         {...provided.draggableProps}
                         {...provided.dragHandleProps}
-                        className="p-4 bg-[#2a2a2a] rounded-lg cursor-move"
-                        onClick={() => {
-                          setEditingNote(note)
-                          setIsModalOpen(true)
-                        }}
-                        onContextMenu={(e) => handleContextMenu(e, note.id)}
+                        className="p-4 bg-[#2a2a2a] rounded-lg cursor-move hover:bg-[#3a3a3a] transition-colors"
                       >
-                        <h3 className="text-lg font-semibold mb-2">{note.title}</h3>
-                        <p className="text-gray-400">{note.content}</p>
+                        <div className="flex justify-between items-start mb-2">
+                          <h3 className="text-lg font-semibold">{note.title}</h3>
+                          <div className="flex space-x-2">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                setViewingNote(note)
+                                setIsModalOpen(true)
+                              }}
+                              className="p-1 text-gray-400 hover:text-white"
+                            >
+                              <Eye size={16} />
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                setEditingNote(note)
+                                setIsModalOpen(true)
+                              }}
+                              className="p-1 text-gray-400 hover:text-white"
+                            >
+                              <Edit2 size={16} />
+                            </button>
+                          </div>
+                        </div>
+                        <p className="text-gray-400 text-sm line-clamp-3">{note.content}</p>
                         {note.categoryId && (
                           <span className="mt-2 inline-block px-2 py-1 text-xs bg-[#3a3a3a] rounded">
                             {categories.find(c => c.id === note.categoryId)?.name}
@@ -323,98 +281,89 @@ export function RichNote({ notes, onAddNote, onDeleteNote, onUpdateNote }: RichN
           </Droppable>
         </DragDropContext>
 
-        {contextMenu && (
-          <ContextMenu
-            x={contextMenu.x}
-            y={contextMenu.y}
-            onClose={() => setContextMenu(null)}
-            onOpenInNewTab={() => handleOpenInNewTab(contextMenu.noteId)}
-            onOpenInNewWindow={() => handleOpenInNewWindow(contextMenu.noteId)}
-            onOpenInPopup={() => handleOpenInPopup(contextMenu.noteId)}
-          />
-        )}
-
-        {popupNote && (
-          <div
-            ref={popupRef}
-            className={`fixed bg-[#2a2a2a] rounded-lg shadow-lg z-50 ${
-              isPopupMinimized ? 'w-64 h-12' : 'w-96 h-96'
-            }`}
-            style={{ left: '50%', top: '50%', transform: 'translate(-50%, -50%)' }}
-          >
-            <div className="popup-header flex justify-between items-center p-2 bg-[#3a3a3a] rounded-t-lg cursor-move">
-              <h3 className="text-lg font-semibold">{popupNote.title}</h3>
-              <div className="flex space-x-2">
-                <button
-                  onClick={() => setIsPopupMinimized(!isPopupMinimized)}
-                  className="p-1 hover:bg-[#4a4a4a] rounded"
-                >
-                  {isPopupMinimized ? <Maximize2 size={16} /> : <Minimize2 size={16} />}
-                </button>
-                <button
-                  onClick={() => setPopupNote(null)}
-                  className="p-1 hover:bg-[#4a4a4a] rounded"
-                >
-                  <X size={16} />
-                </button>
-              </div>
-            </div>
-            {!isPopupMinimized && (
-              <div className="p-4">
-                <p className="text-gray-400">{popupNote.content}</p>
-                {popupNote.categoryId && (
-                  <span className="mt-2 inline-block px-2 py-1 text-xs bg-[#3a3a3a] rounded">
-                    {categories.find(c => c.id === popupNote.categoryId)?.name}
-                  </span>
-                )}
-              </div>
-            )}
-          </div>
-        )}
-
-        {isModalOpen && (
+        {(isModalOpen && (editingNote || viewingNote || newNote)) && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
-            <div className="bg-[#1a1a1a] p-6 rounded-lg w-full max-w-md">
-              <h3 className="text-xl font-semibold mb-4">
-                {editingNote ? 'ノートを編集' : '新規ノート'}
-              </h3>
-              <div className="space-y-4">
+            <div
+              ref={modalRef}
+              className="bg-[#1a1a1a] p-6 rounded-lg relative"
+              style={{
+                width: '80%',
+                height: '80%',
+                minWidth: '400px',
+                minHeight: '300px',
+                maxWidth: '95%',
+                maxHeight: '95%',
+                top: '10%',
+                left: '10%',
+                position: 'fixed',
+                overflow: 'auto'
+              }}
+            >
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-xl font-semibold">
+                  {editingNote ? 'ノートを編集' : viewingNote ? 'ノートを表示' : '新規ノート'}
+                </h3>
+                <div className="flex space-x-2">
+                  <button
+                    onClick={toggleMaximize}
+                    className="p-1 text-gray-400 hover:text-white"
+                  >
+                    {isMaximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setIsModalOpen(false)
+                      setEditingNote(null)
+                      setViewingNote(null)
+                      setNewNote({ title: '', content: '', categoryId: null })
+                    }}
+                    className="p-1 text-gray-400 hover:text-white"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-4 h-[calc(100%-4rem)]">
                 <input
                   type="text"
                   placeholder="タイトル"
-                  value={editingNote?.title || newNote.title || ''}
+                  value={editingNote?.title || viewingNote?.title || newNote.title || ''}
                   onChange={(e) => {
                     if (editingNote) {
                       setEditingNote({ ...editingNote, title: e.target.value })
-                    } else {
+                    } else if (!viewingNote) {
                       setNewNote({ ...newNote, title: e.target.value })
                     }
                   }}
                   className="w-full p-2 bg-[#2a2a2a] rounded"
+                  disabled={!!viewingNote}
                 />
                 <textarea
                   placeholder="内容"
-                  value={editingNote?.content || newNote.content || ''}
+                  value={editingNote?.content || viewingNote?.content || newNote.content || ''}
                   onChange={(e) => {
                     if (editingNote) {
                       setEditingNote({ ...editingNote, content: e.target.value })
-                    } else {
+                    } else if (!viewingNote) {
                       setNewNote({ ...newNote, content: e.target.value })
                     }
                   }}
-                  className="w-full p-2 bg-[#2a2a2a] rounded h-32"
+                  className="w-full p-2 bg-[#2a2a2a] rounded flex-1 h-[calc(100%-8rem)]"
+                  disabled={!!viewingNote}
                 />
                 <select
-                  value={editingNote?.categoryId || newNote.categoryId || ''}
+                  value={editingNote?.categoryId || viewingNote?.categoryId || newNote.categoryId || ''}
                   onChange={(e) => {
                     const value = e.target.value || null
                     if (editingNote) {
                       setEditingNote({ ...editingNote, categoryId: value })
-                    } else {
+                    } else if (!viewingNote) {
                       setNewNote({ ...newNote, categoryId: value })
                     }
                   }}
                   className="w-full p-2 bg-[#2a2a2a] rounded"
+                  disabled={!!viewingNote}
                 >
                   <option value="">未分類</option>
                   {categories.map(category => (
@@ -423,24 +372,35 @@ export function RichNote({ notes, onAddNote, onDeleteNote, onUpdateNote }: RichN
                     </option>
                   ))}
                 </select>
-                <div className="flex justify-end space-x-2">
-                  <button
-                    onClick={() => {
-                      setIsModalOpen(false)
-                      setEditingNote(null)
-                      setNewNote({ title: '', content: '', categoryId: null })
-                    }}
-                    className="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700"
-                  >
-                    キャンセル
-                  </button>
-                  <button
-                    onClick={handleSaveNote}
-                    className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
-                  >
-                    保存
-                  </button>
-                </div>
+                {!viewingNote && (
+                  <div className="flex justify-end space-x-2">
+                    <button
+                      onClick={() => {
+                        setIsModalOpen(false)
+                        setEditingNote(null)
+                        setViewingNote(null)
+                        setNewNote({ title: '', content: '', categoryId: null })
+                      }}
+                      className="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700"
+                    >
+                      キャンセル
+                    </button>
+                    <button
+                      onClick={handleSaveNote}
+                      className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+                    >
+                      保存
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* リサイズハンドル */}
+              <div
+                className="resize-handle absolute bottom-0 right-0 w-4 h-4 cursor-se-resize"
+                onMouseDown={handleMouseDown}
+              >
+                <div className="w-full h-full border-r-2 border-b-2 border-gray-400" />
               </div>
             </div>
           </div>
