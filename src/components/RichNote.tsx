@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
-import { X, Bold, Italic, List, Link, Image, AlignLeft, CheckSquare, Code, Plus, Search, SortAsc, SortDesc, Download } from 'lucide-react'
+import { X, Bold, Italic, List, Link, Image, AlignLeft, CheckSquare, Code, Plus, Search, SortAsc, SortDesc, Download, ExternalLink, Maximize2, Minimize2 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
@@ -32,6 +32,46 @@ interface RichNoteProps {
   onUpdateNote: (id: string, note: Partial<NoteItem>) => void
 }
 
+interface ContextMenuProps {
+  x: number
+  y: number
+  onClose: () => void
+  onOpenInNewTab: () => void
+  onOpenInNewWindow: () => void
+  onOpenInPopup: () => void
+}
+
+function ContextMenu({ x, y, onClose, onOpenInNewTab, onOpenInNewWindow, onOpenInPopup }: ContextMenuProps) {
+  return (
+    <div
+      className="fixed bg-[#2a2a2a] rounded-lg shadow-lg py-2 z-50"
+      style={{ top: y, left: x }}
+    >
+      <button
+        onClick={onOpenInNewTab}
+        className="w-full px-4 py-2 text-left hover:bg-[#3a3a3a] flex items-center"
+      >
+        <ExternalLink size={16} className="mr-2" />
+        新しいタブで開く
+      </button>
+      <button
+        onClick={onOpenInNewWindow}
+        className="w-full px-4 py-2 text-left hover:bg-[#3a3a3a] flex items-center"
+      >
+        <Maximize2 size={16} className="mr-2" />
+        新しいウィンドウで開く
+      </button>
+      <button
+        onClick={onOpenInPopup}
+        className="w-full px-4 py-2 text-left hover:bg-[#3a3a3a] flex items-center"
+      >
+        <Minimize2 size={16} className="mr-2" />
+        ポップアップで開く
+      </button>
+    </div>
+  )
+}
+
 export function RichNote({ notes, onAddNote, onDeleteNote, onUpdateNote }: RichNoteProps) {
   const [categories, setCategories] = useState<Category[]>([])
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null)
@@ -49,6 +89,10 @@ export function RichNote({ notes, onAddNote, onDeleteNote, onUpdateNote }: RichN
   const [itemToDelete, setItemToDelete] = useState<string | null>(null)
   const [deletedNotes, setDeletedNotes] = useState<NoteItem[]>([])
   const editorRef = useRef<HTMLTextAreaElement>(null)
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; noteId: string } | null>(null)
+  const [popupNote, setPopupNote] = useState<NoteItem | null>(null)
+  const [isPopupMinimized, setIsPopupMinimized] = useState(false)
+  const popupRef = useRef<HTMLDivElement>(null)
 
   // ローカルストレージからデータを読み込む
   useEffect(() => {
@@ -133,6 +177,86 @@ export function RichNote({ notes, onAddNote, onDeleteNote, onUpdateNote }: RichN
     ? notes.filter(note => note.categoryId === selectedCategoryId)
     : notes
 
+  // コンテキストメニューの外側をクリックしたら閉じる
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (contextMenu) {
+        setContextMenu(null)
+      }
+    }
+    document.addEventListener('click', handleClickOutside)
+    return () => document.removeEventListener('click', handleClickOutside)
+  }, [contextMenu])
+
+  // ポップアップのドラッグ機能
+  useEffect(() => {
+    if (!popupRef.current || !popupNote) return
+
+    const popup = popupRef.current
+    let isDragging = false
+    let offsetX = 0
+    let offsetY = 0
+
+    const handleMouseDown = (e: MouseEvent) => {
+      if (e.target === popup.querySelector('.popup-header')) {
+        isDragging = true
+        offsetX = e.clientX - popup.offsetLeft
+        offsetY = e.clientY - popup.offsetTop
+      }
+    }
+
+    const handleMouseMove = (e: MouseEvent) => {
+      if (isDragging) {
+        popup.style.left = `${e.clientX - offsetX}px`
+        popup.style.top = `${e.clientY - offsetY}px`
+      }
+    }
+
+    const handleMouseUp = () => {
+      isDragging = false
+    }
+
+    popup.addEventListener('mousedown', handleMouseDown)
+    document.addEventListener('mousemove', handleMouseMove)
+    document.addEventListener('mouseup', handleMouseUp)
+
+    return () => {
+      popup.removeEventListener('mousedown', handleMouseDown)
+      document.removeEventListener('mousemove', handleMouseMove)
+      document.removeEventListener('mouseup', handleMouseUp)
+    }
+  }, [popupNote])
+
+  const handleContextMenu = (e: React.MouseEvent, noteId: string) => {
+    e.preventDefault()
+    setContextMenu({ x: e.clientX, y: e.clientY, noteId })
+  }
+
+  const handleOpenInNewTab = (noteId: string) => {
+    const note = notes.find(n => n.id === noteId)
+    if (note) {
+      window.open(`/note/${noteId}`, '_blank')
+    }
+    setContextMenu(null)
+  }
+
+  const handleOpenInNewWindow = (noteId: string) => {
+    const note = notes.find(n => n.id === noteId)
+    if (note) {
+      const features = 'width=800,height=600,left=100,top=100'
+      window.open(`/note/${noteId}`, '_blank', features)
+    }
+    setContextMenu(null)
+  }
+
+  const handleOpenInPopup = (noteId: string) => {
+    const note = notes.find(n => n.id === noteId)
+    if (note) {
+      setPopupNote(note)
+    }
+    setContextMenu(null)
+  }
+
   return (
     <div className="flex h-full">
       <div className="w-64 p-4 border-r border-gray-700">
@@ -180,6 +304,7 @@ export function RichNote({ notes, onAddNote, onDeleteNote, onUpdateNote }: RichN
                           setEditingNote(note)
                           setIsModalOpen(true)
                         }}
+                        onContextMenu={(e) => handleContextMenu(e, note.id)}
                       >
                         <h3 className="text-lg font-semibold mb-2">{note.title}</h3>
                         <p className="text-gray-400">{note.content}</p>
@@ -197,6 +322,55 @@ export function RichNote({ notes, onAddNote, onDeleteNote, onUpdateNote }: RichN
             )}
           </Droppable>
         </DragDropContext>
+
+        {contextMenu && (
+          <ContextMenu
+            x={contextMenu.x}
+            y={contextMenu.y}
+            onClose={() => setContextMenu(null)}
+            onOpenInNewTab={() => handleOpenInNewTab(contextMenu.noteId)}
+            onOpenInNewWindow={() => handleOpenInNewWindow(contextMenu.noteId)}
+            onOpenInPopup={() => handleOpenInPopup(contextMenu.noteId)}
+          />
+        )}
+
+        {popupNote && (
+          <div
+            ref={popupRef}
+            className={`fixed bg-[#2a2a2a] rounded-lg shadow-lg z-50 ${
+              isPopupMinimized ? 'w-64 h-12' : 'w-96 h-96'
+            }`}
+            style={{ left: '50%', top: '50%', transform: 'translate(-50%, -50%)' }}
+          >
+            <div className="popup-header flex justify-between items-center p-2 bg-[#3a3a3a] rounded-t-lg cursor-move">
+              <h3 className="text-lg font-semibold">{popupNote.title}</h3>
+              <div className="flex space-x-2">
+                <button
+                  onClick={() => setIsPopupMinimized(!isPopupMinimized)}
+                  className="p-1 hover:bg-[#4a4a4a] rounded"
+                >
+                  {isPopupMinimized ? <Maximize2 size={16} /> : <Minimize2 size={16} />}
+                </button>
+                <button
+                  onClick={() => setPopupNote(null)}
+                  className="p-1 hover:bg-[#4a4a4a] rounded"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+            </div>
+            {!isPopupMinimized && (
+              <div className="p-4">
+                <p className="text-gray-400">{popupNote.content}</p>
+                {popupNote.categoryId && (
+                  <span className="mt-2 inline-block px-2 py-1 text-xs bg-[#3a3a3a] rounded">
+                    {categories.find(c => c.id === popupNote.categoryId)?.name}
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
         {isModalOpen && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
